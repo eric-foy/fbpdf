@@ -217,10 +217,10 @@ static void maintouchloop(void)
     struct input_event ev[64];
     size_t rb;
     int i;
-
+    
     fd = open("/dev/input/by-id/usb-ELAN_Touchscreen-event-if00", O_RDONLY);
 
-    while ((rb = read(fd,ev,sizeof(struct input_event)*64)) <= 0)
+    while (rb = read(fd,ev,sizeof(struct input_event)*64))
     {
         for (i = 0;  i <  (rb / sizeof(struct input_event)); i++)
         {
@@ -235,7 +235,6 @@ static void maintouchloop(void)
                 {
                     if (!loadpage(num - getcount(1)))
                         srow = prow;
-                    puts("below");
                 }
             }
         }
