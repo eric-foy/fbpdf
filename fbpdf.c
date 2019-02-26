@@ -207,7 +207,6 @@ static void maintouchloop(void)
 {
     int step = srows / PAGESTEPS;
     int hstep = scols / PAGESTEPS;
-    int c;
     term_setup();
     signal(SIGCONT, sigcont);
     loadpage(num);
@@ -240,8 +239,12 @@ static void maintouchloop(void)
                 }
             }
         }
-    }
 
+        srow = MAX(prow - srows + MARGIN, MIN(prow + prows - MARGIN, srow));
+        scol = MAX(pcol - scols + MARGIN, MIN(pcol + pcols - MARGIN, scol));
+        draw();
+    }
+    term_cleanup();
 }
 
 static void mainloop(void)
