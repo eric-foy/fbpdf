@@ -123,6 +123,51 @@ static int readkey(void)
     return b;
 }
 
+static int touchstart(void)
+{
+    struct input_event ev[64];
+    size_t rb;
+    int i;
+
+    rb = read(fd, ev, sizeof(struct input_event)*64);
+
+    for (i = 0;  i <  (rb / sizeof(struct input_event)); i++) {
+        if (ev[i].type == EV_KEY && ev[i].code == 330 && ev[i].value == 1)
+            return 0;
+    }
+    return 1;
+}
+
+static int readtouch(void)
+{
+    struct input_event ev[64];
+    size_t rb;
+    char b = '\0';
+    int end = 1;
+    int i;
+    int c;
+
+    if ((c = touchstart()) == 0) {
+        do {
+            rb = read(fd, ev, sizeof(struct input_event)*64);
+
+            for (i = 0;  i <  (rb / sizeof(struct input_event)); i++) {
+                if (ev[i].type == EV_KEY && ev[i].code == 330 && ev[i].value == 0) {
+                    end = 0;
+                }
+                else if (ev[i].type == EV_ABS && ev[i].code == 0 && ev[i].value > 1888) {
+                    b = 'J';
+                }
+                else if (ev[i].type == EV_ABS && ev[i].code == 0 && ev[i].value > 0) {
+                    b = 'K';
+                }
+            }
+        } while (end == 1);
+    }
+
+    return b;
+}
+
 static int getcount(int def)
 {
     int result = count ? count : def;
@@ -203,49 +248,6 @@ static int lmargin(void)
     return ret;
 }
 
-static void maintouchloop(void)
-{
-    int step = srows / PAGESTEPS;
-    int hstep = scols / PAGESTEPS;
-    term_setup();
-    signal(SIGCONT, sigcont);
-    loadpage(num);
-    srow = prow;
-    scol = -scols / 2;
-    draw();
-    
-    struct input_event ev[64];
-    size_t rb;
-    int i;
-    
-    fd = open("/dev/input/by-id/usb-ELAN_Touchscreen-event-if00", O_RDONLY);
-
-    while (rb = read(fd,ev,sizeof(struct input_event)*64))
-    {
-        for (i = 0;  i <  (rb / sizeof(struct input_event)); i++)
-        {
-            if (ev[i].type == EV_ABS && ev[i].code == 0 && ev[i].value > 0)
-            {
-                if (ev[i].value > 1888)
-                {
-                    if (!loadpage(num + getcount(1)))
-                        srow = prow;
-                }
-                else
-                {
-                    if (!loadpage(num - getcount(1)))
-                        srow = prow;
-                }
-            }
-        }
-
-        srow = MAX(prow - srows + MARGIN, MIN(prow + prows - MARGIN, srow));
-        scol = MAX(pcol - scols + MARGIN, MIN(pcol + pcols - MARGIN, scol));
-        draw();
-    }
-    term_cleanup();
-}
-
 static void mainloop(void)
 {
     int step = srows / PAGESTEPS;
@@ -257,7 +259,7 @@ static void mainloop(void)
     srow = prow;
     scol = -scols / 2;
     draw();
-    while ((c = readkey()) != -1) {
+    while ((c = readtouch()) != -1) {
         if (c == 'q')
             break;
         if (c == 'e' && reload())
@@ -418,13 +420,13 @@ int main(int argc, char *argv[])
     printinfo();
     if (fb_init())
         return 1;
+    fd = open("/dev/input/by-id/usb-ELAN_Touchscreen-event-if00", O_RDONLY);
     srows = fb_rows();
     scols = fb_cols();
     if (FBM_BPP(fb_mode()) != sizeof(fbval_t))
         fprintf(stderr, "fbpdf: fbval_t doesn't match fb depth\n");
     else
-        //mainloop();
-        maintouchloop();
+        mainloop();
     fb_free();
     free(pbuf);
     if (doc)
