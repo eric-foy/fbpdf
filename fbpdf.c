@@ -41,7 +41,8 @@ static fbval_t *pbuf;		/* current page */
 static int srows, scols;	/* screen dimentions */
 static int prows, pcols;	/* current page dimensions */
 static int prow, pcol;		/* page position */
-static int srow, scol;		/* screen position */
+static int srow, scol;      /* screen position */
+static int voff = 122;      /* offset row position */
 
 static struct termios termios;
 static char filename[256];
@@ -49,11 +50,11 @@ static int mark[128];		/* mark page number */
 static int mark_row[128];	/* mark head position */
 static int num = 1;		/* page number */
 static int numdiff;		/* G command page number difference */
-static int zoom = 15;
-static int zoom_def = 15;	/* default zoom */
-static int rotate;
+static int zoom = 22;
+static int zoom_def = 22;	/* default zoom */
+static int rotate = 90;
 static int count;
-static int fd;
+static int fd; /* input event device */
 
 static void draw(void)
 {
@@ -123,49 +124,42 @@ static int readkey(void)
     return b;
 }
 
-static int touchstart(void)
+static int touchstart(int es, struct input_event *ev)
 {
-    struct input_event ev[64];
-    size_t rb;
     int i;
-
-    rb = read(fd, ev, sizeof(struct input_event)*64);
-
-    for (i = 0;  i <  (rb / sizeof(struct input_event)); i++) {
+    for (i = 0;  i < es; i++) {
         if (ev[i].type == EV_KEY && ev[i].code == 330 && ev[i].value == 1)
             return 0;
     }
     return 1;
 }
 
+static int touchy(int es, struct input_event *ev)
+{
+    int i;
+    for (i = 0;  i < es; i++) {
+        if (ev[i].type == EV_ABS && ev[i].code == 1) {
+            if (ev[i].value > 1056)
+                return 'J';
+            else if (ev[i].value > 0)
+                return 'K';
+        }
+    }
+    return '\0';
+}
+
 static int readtouch(void)
 {
     struct input_event ev[64];
     size_t rb;
-    char b = '\0';
-    int end = 1;
-    int i;
-    int c;
+    int c, es;
 
-    if ((c = touchstart()) == 0) {
-        do {
-            rb = read(fd, ev, sizeof(struct input_event)*64);
+    do {
+        rb = read(fd, ev, sizeof(struct input_event)*64);
+        es = rb / sizeof(struct input_event);
+    } while ((c = touchstart(es, ev)) != 0);
 
-            for (i = 0;  i <  (rb / sizeof(struct input_event)); i++) {
-                if (ev[i].type == EV_KEY && ev[i].code == 330 && ev[i].value == 0) {
-                    end = 0;
-                }
-                else if (ev[i].type == EV_ABS && ev[i].code == 0 && ev[i].value > 1888) {
-                    b = 'J';
-                }
-                else if (ev[i].type == EV_ABS && ev[i].code == 0 && ev[i].value > 0) {
-                    b = 'K';
-                }
-            }
-        } while (end == 1);
-    }
-
-    return b;
+    return touchy(es, ev);
 }
 
 static int getcount(int def)
@@ -205,6 +199,13 @@ static void term_cleanup(void)
 static void sigcont(int sig)
 {
     term_setup();
+}
+
+static void sigint(int sig)
+{
+    signal(sig, SIG_IGN);
+    term_cleanup();
+    exit(0);
 }
 
 static int reload(void)
@@ -255,8 +256,9 @@ static void mainloop(void)
     int c;
     term_setup();
     signal(SIGCONT, sigcont);
+    signal(SIGINT, sigint);
     loadpage(num);
-    srow = prow;
+    srow = prow + voff;
     scol = -scols / 2;
     draw();
     while ((c = readtouch()) != -1) {
@@ -381,7 +383,7 @@ static void mainloop(void)
             default:	/* no need to redraw */
                 continue;
         }
-        srow = MAX(prow - srows + MARGIN, MIN(prow + prows - MARGIN, srow));
+        srow = MAX(prow - srows + MARGIN, MIN(prow + prows - MARGIN, srow)) + voff;
         scol = MAX(pcol - scols + MARGIN, MIN(pcol + pcols - MARGIN, scol));
         draw();
     }
@@ -389,7 +391,7 @@ static void mainloop(void)
 }
 
 static char *usage =
-"usage: fbpdf [-r rotation] [-z zoom x10] [-p page] filename\n";
+"usage: fbpdf [-r rotation] [-z zoom x10] [-p page] [-v offset] filename\n";
 
 int main(int argc, char *argv[])
 {
@@ -414,6 +416,9 @@ int main(int argc, char *argv[])
                 break;
             case 'p':
                 num = atoi(argv[i][2] ? argv[i] + 2 : argv[++i]);
+                break;
+            case 'v':
+                voff = atoi(argv[i][2] ? argv[i] + 2 : argv[++i]);
                 break;
         }
     }
