@@ -19,6 +19,7 @@
 #include <linux/input.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +36,8 @@
 #define MARGIN		1
 #define CTRLKEY(x)	((x) - 96)
 #define ISMARK(x)	(isalpha(x) || (x) == '\'' || (x) == '`')
+
+#define TOUCHDEV "/dev/input/by-id/usb-ELAN_Touchscreen-event-if00"
 
 static struct doc *doc;
 static fbval_t *pbuf;		/* current page */
@@ -55,6 +58,7 @@ static int zoom_def = 22;	/* default zoom */
 static int rotate = 90;
 static int count;
 static int fd; /* input event device */
+static char *cache; /* cache for current page */
 
 static void draw(void)
 {
@@ -162,6 +166,56 @@ static int readtouch(void)
     return touchy(es, ev);
 }
 
+int open_cache(char *path, int oflag)
+{
+    int fd_cache = open(path, oflag | O_CREAT);
+    if (fd_cache == -1)
+    {
+        char *dir = strdup(path);
+        char *basename = strrchr(dir, '/');
+        *basename = '\0';
+
+        mkdir(dir, 0700);
+        fd_cache = open(path, oflag | O_CREAT, 0644);
+    }
+
+    return fd_cache;
+}
+
+void read_cache(int fd_cache)
+{
+    char buffer[32];
+    read(fd_cache, buffer, 16);
+
+    int current_page = atoi(buffer);
+    if (current_page != 0)
+    {
+        num = current_page;
+    }
+}
+
+void write_cache(int fd_cache)
+{
+    char current_page[12];
+    int len = snprintf(current_page, 12, "%d", num);
+    write(fd_cache, current_page, len);
+    fsync(fd_cache);
+}
+
+void write_out_cache()
+{
+    int fd_cache = open_cache(cache, O_WRONLY);
+    write_cache(fd_cache);
+    close(fd_cache);
+}
+
+void read_in_cache()
+{
+    int fd_cache = open_cache(cache, O_RDONLY);
+    read_cache(fd_cache);
+    close(fd_cache);
+}
+
 static int getcount(int def)
 {
     int result = count ? count : def;
@@ -196,6 +250,13 @@ static void term_cleanup(void)
     printf("\x1b[?25h\n");		/* show the cursor */
 }
 
+void free_to_go()
+{
+    fb_free();
+    free(pbuf);
+    close(fd);
+}
+
 static void sigcont(int sig)
 {
     term_setup();
@@ -204,7 +265,17 @@ static void sigcont(int sig)
 static void sigint(int sig)
 {
     signal(sig, SIG_IGN);
+    write_out_cache();
     term_cleanup();
+    free_to_go();
+    exit(0);
+}
+
+static void sigterm(int sig)
+{
+    write_out_cache();
+    term_cleanup();
+    free_to_go();
     exit(0);
 }
 
@@ -257,6 +328,7 @@ static void mainloop(void)
     term_setup();
     signal(SIGCONT, sigcont);
     signal(SIGINT, sigint);
+    signal(SIGTERM, sigterm);
     loadpage(num);
     srow = prow + voff;
     scol = -scols / 2;
@@ -390,23 +462,41 @@ static void mainloop(void)
     term_cleanup();
 }
 
+char *find_cache(char *filename)
+{
+    char *home = getenv("HOME");
+    if (!home) NULL;
+
+    char *extension = strrchr(filename, '.');
+    *extension = '\0';
+
+    char *basename = strrchr(filename, '/');
+
+    size_t len = strlen(home) + 14 + (extension - basename);
+    char *path = (char *) malloc(len);
+    snprintf(path, len, "%s/.cache/fbpdf/%s", home, basename + 1);
+
+    return path;
+}
+
 static char *usage =
 "usage: fbpdf [-r rotation] [-z zoom x10] [-p page] [-v offset] filename\n";
 
 int main(int argc, char *argv[])
 {
-    int i = 1;
     if (argc < 2) {
         printf(usage);
         return 1;
     }
+
     strcpy(filename, argv[argc - 1]);
     doc = doc_open(filename);
     if (!doc || !doc_pages(doc)) {
         fprintf(stderr, "fbpdf: cannot open <%s>\n", filename);
         return 1;
     }
-    for (i = 1; i < argc && argv[i][0] == '-'; i++) {
+
+    for (int i = 1; i < argc && argv[i][0] == '-'; i++) {
         switch (argv[i][1]) {
             case 'r':
                 rotate = atoi(argv[i][2] ? argv[i] + 2 : argv[++i]);
@@ -422,19 +512,28 @@ int main(int argc, char *argv[])
                 break;
         }
     }
+
+    cache = find_cache(filename);
+    read_in_cache();
+
     printinfo();
     if (fb_init())
         return 1;
-    fd = open("/dev/input/by-id/usb-ELAN_Touchscreen-event-if00", O_RDONLY);
+
+    fd = open(TOUCHDEV, O_RDONLY);
+
     srows = fb_rows();
     scols = fb_cols();
+
     if (FBM_BPP(fb_mode()) != sizeof(fbval_t))
         fprintf(stderr, "fbpdf: fbval_t doesn't match fb depth\n");
     else
         mainloop();
-    fb_free();
-    free(pbuf);
+
+    free_to_go();
+
     if (doc)
         doc_close(doc);
+
     return 0;
 }
