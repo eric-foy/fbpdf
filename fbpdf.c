@@ -17,6 +17,7 @@
  */
 #include <ctype.h>
 #include <fcntl.h>
+#include <linux/input.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -37,6 +38,8 @@
 #define CTRLKEY(x)	((x) - 96)
 #define ISMARK(x)	(isalpha(x) || (x) == '\'' || (x) == '`')
 
+#define TOUCHDEV "/dev/input/by-id/usb-ELAN_Touchscreen-event-if00"
+
 static struct doc *doc;
 static fbval_t *pbuf;		/* current page */
 static int srows, scols;	/* screen dimentions */
@@ -55,6 +58,7 @@ static int zoom = 22;
 static int zoom_def = 22;	/* default zoom */
 static int rotate = 90;
 static int count;
+static int fd; /* touch event device */
 static char *cache; /* cache for current page */
 
 static void draw(void)
@@ -123,6 +127,75 @@ static int readkey(void)
     if (read(0, &b, 1) <= 0)
         return -1;
     return b;
+}
+
+int touch_start(int es, struct input_event *ev)
+{
+    for (int i = 0;  i < es; i++)
+    {
+        if (ev[i].type == EV_KEY && ev[i].code == 330 && ev[i].value == 1)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int touch_y(int es, struct input_event *ev)
+{
+    for (int i = 0;  i < es; i++)
+    {
+        if (ev[i].type == EV_ABS && ev[i].code == 1)
+        {
+            if (ev[i].value > 1056)
+            {
+                return 'J';
+            }
+            else if (ev[i].value > 0)
+            {
+                return 'K';
+            }
+        }
+    }
+
+    return '\0';
+}
+
+int read_touch()
+{
+    struct input_event ev[64];
+
+    ssize_t rb = read(fd, ev, sizeof(struct input_event)*64);
+    size_t es = rb / sizeof(struct input_event);
+
+    if (touch_start(es, ev))
+    {
+        return touch_y(es, ev);
+    }
+
+    return '\0';
+}
+
+int read_input()
+{
+    fd_set set;
+    
+    FD_ZERO(&set);
+    FD_SET(fd, &set); 
+    FD_SET(0, &set);
+
+    if (select(FD_SETSIZE, &set, NULL, NULL, NULL) < 0) return -1;
+
+    if (FD_ISSET(fd, &set))
+    {
+        return read_touch(fd);
+    }
+    else if (FD_ISSET(0, &set))
+    {
+        return readkey();
+    }
+
+    return '\0';
 }
 
 int open_cache(char *path, int oflag)
@@ -213,6 +286,7 @@ void free_to_go()
 {
     fb_free();
     free(pbuf);
+    close(fd);
     if (doc) doc_close(doc);
 }
 
@@ -292,7 +366,7 @@ static void mainloop(void)
     srow = prow + voff;
     scol = -scols / 2;
     draw();
-    while ((c = readkey()) != -1) {
+    while ((c = read_input()) != -1) {
         if (c == 'q')
             break;
         if (c == 'e' && reload())
@@ -471,6 +545,8 @@ int main(int argc, char *argv[])
                 break;
         }
     }
+
+    fd = open(TOUCHDEV, O_RDONLY);
 
     cache = find_cache(filename);
     read_in_cache();
