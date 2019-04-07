@@ -498,15 +498,17 @@ static void mainloop(void)
 char *find_cache(char *filename)
 {
     char *home = getenv("HOME");
-    if (!home) NULL;
+    if (!home) return NULL;
 
     char *extension = strrchr(filename, '.');
     *extension = '\0';
 
     char *basename = strrchr(filename, '/');
+    if (!basename) basename = filename - 1;
 
     size_t len = strlen(home) + 14 + (extension - basename);
     char *path = (char *) malloc(len);
+
     snprintf(path, len, "%s/.cache/fbpdf/%s", home, basename + 1);
 
     return path;
@@ -563,6 +565,7 @@ int main(int argc, char *argv[])
     else
         mainloop();
 
+    write_out_cache();
     free_to_go();
 
     return 0;
