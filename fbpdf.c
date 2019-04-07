@@ -16,10 +16,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include <ctype.h>
-#include <linux/input.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,8 +36,6 @@
 #define MARGIN		1
 #define CTRLKEY(x)	((x) - 96)
 #define ISMARK(x)	(isalpha(x) || (x) == '\'' || (x) == '`')
-
-#define TOUCHDEV "/dev/input/by-id/usb-ELAN_Touchscreen-event-if00"
 
 static struct doc *doc;
 static fbval_t *pbuf;		/* current page */
@@ -57,7 +55,6 @@ static int zoom = 22;
 static int zoom_def = 22;	/* default zoom */
 static int rotate = 90;
 static int count;
-static int fd; /* input event device */
 static char *cache; /* cache for current page */
 
 static void draw(void)
@@ -126,44 +123,6 @@ static int readkey(void)
     if (read(0, &b, 1) <= 0)
         return -1;
     return b;
-}
-
-static int touchstart(int es, struct input_event *ev)
-{
-    int i;
-    for (i = 0;  i < es; i++) {
-        if (ev[i].type == EV_KEY && ev[i].code == 330 && ev[i].value == 1)
-            return 0;
-    }
-    return 1;
-}
-
-static int touchy(int es, struct input_event *ev)
-{
-    int i;
-    for (i = 0;  i < es; i++) {
-        if (ev[i].type == EV_ABS && ev[i].code == 1) {
-            if (ev[i].value > 1056)
-                return 'J';
-            else if (ev[i].value > 0)
-                return 'K';
-        }
-    }
-    return '\0';
-}
-
-static int readtouch(void)
-{
-    struct input_event ev[64];
-    size_t rb;
-    int c, es;
-
-    do {
-        rb = read(fd, ev, sizeof(struct input_event)*64);
-        es = rb / sizeof(struct input_event);
-    } while ((c = touchstart(es, ev)) != 0);
-
-    return touchy(es, ev);
 }
 
 int open_cache(char *path, int oflag)
@@ -254,7 +213,7 @@ void free_to_go()
 {
     fb_free();
     free(pbuf);
-    close(fd);
+    if (doc) doc_close(doc);
 }
 
 static void sigcont(int sig)
@@ -333,7 +292,7 @@ static void mainloop(void)
     srow = prow + voff;
     scol = -scols / 2;
     draw();
-    while ((c = readtouch()) != -1) {
+    while ((c = readkey()) != -1) {
         if (c == 'q')
             break;
         if (c == 'e' && reload())
@@ -520,8 +479,6 @@ int main(int argc, char *argv[])
     if (fb_init())
         return 1;
 
-    fd = open(TOUCHDEV, O_RDONLY);
-
     srows = fb_rows();
     scols = fb_cols();
 
@@ -531,9 +488,6 @@ int main(int argc, char *argv[])
         mainloop();
 
     free_to_go();
-
-    if (doc)
-        doc_close(doc);
 
     return 0;
 }
