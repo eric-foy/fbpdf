@@ -176,14 +176,8 @@ int read_touch()
     return '\0';
 }
 
-int read_input()
+int read_input(fd_set set)
 {
-    fd_set set;
-    
-    FD_ZERO(&set);
-    FD_SET(fd, &set); 
-    FD_SET(0, &set);
-
     if (select(FD_SETSIZE, &set, NULL, NULL, NULL) < 0) return -1;
 
     if (FD_ISSET(fd, &set))
@@ -355,18 +349,24 @@ static int lmargin(void)
 
 static void mainloop(void)
 {
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(fd, &set); 
+    FD_SET(0, &set);
+
+    signal(SIGCONT, sigcont);
+    signal(SIGINT, sigint);
+    signal(SIGTERM, sigterm);
+
     int step = srows / PAGESTEPS;
     int hstep = scols / PAGESTEPS;
     int c;
     term_setup();
-    signal(SIGCONT, sigcont);
-    signal(SIGINT, sigint);
-    signal(SIGTERM, sigterm);
     loadpage(num);
     srow = prow + voff;
     scol = -scols / 2;
     draw();
-    while ((c = read_input()) != -1) {
+    while ((c = read_input(set)) != -1) {
         if (c == 'q')
             break;
         if (c == 'e' && reload())
